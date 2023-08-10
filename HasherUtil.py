@@ -10,6 +10,7 @@ import subprocess
 
 verbose_logging = False
 log = None
+max_retries = 5
 
 class CustomLogger:
     def __init__(self, log_file, save_to_file=True):
@@ -202,7 +203,7 @@ def update_and_restart(update_filename):
     sys.exit()
 
 def main():
-    current_version = "1.0.1"
+    current_version = "1.0.2"
 
     global verbose_logging
     global log
@@ -268,21 +269,33 @@ def main():
         for root, _, files in os.walk(dir1):
             for file in files:
                 file_path = os.path.join(root, file)
-                try:
-                    hashes = get_all_hashes(file_path)
-                except Exception as e:
-                    log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                    hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                retries = 0
+                while retries < max_retries:
+                    try:
+                        hashes = get_all_hashes(file_path)
+                        break
+                    except Exception as e:
+                        retries += 1
+                        log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                else:
+                    log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                 hash_info_list_dir1.append((file, file_path, hashes))
 
         for root, _, files in os.walk(dir2):
             for file in files:
                 file_path = os.path.join(root, file)
-                try:
-                    hashes = get_all_hashes(file_path)
-                except Exception as e:
-                    log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                    hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                retries = 0
+                while retries < max_retries:
+                    try:
+                        hashes = get_all_hashes(file_path)
+                        break
+                    except Exception as e:
+                        retries += 1
+                        log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                else:
+                    log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                 hash_info_list_dir2.append((file, file_path, hashes))
 
         matching_files = []
@@ -335,19 +348,25 @@ def main():
         for root, _, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
-                try:
-                    if all_hashes:
-                        hashes = get_all_hashes(file_path)
-                    else:
-                        hash_generator = get_hash(file_path, hash_option)
-                        file_hash = next(hash_generator)
-                        hashes = {hash_option: file_hash}
-                        if verbose_logging:
-                            log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
-                except Exception as e:
-                    log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                retries = 0
+                while retries < max_retries:
+                    try:
+                        if all_hashes:
+                            hashes = get_all_hashes(file_path)
+                        else:
+                            hash_generator = get_hash(file_path, hash_option)
+                            file_hash = next(hash_generator)
+                            hashes = {hash_option: file_hash}
+                            if verbose_logging:
+                                log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
+                        break
+                    except Exception as e:
+                        retries += 1
+                        log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                else:
+                    log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                     failed_hashes += 1
-                    hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
 
                 hashed_files.append((file, file_path))
                 successful_hashes += 1
@@ -456,24 +475,36 @@ def main():
                 hash_info_list_dir1 = []
                 hash_info_list_dir2 = []
 
-                for root, _, files in os.walk(compare_dir_1):
+                for root, _, files in os.walk(dir1):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        try:
-                            hashes = get_all_hashes(file_path)
-                        except Exception as e:
-                            log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                        retries = 0
+                        while retries < max_retries:
+                            try:
+                                hashes = get_all_hashes(file_path)
+                                break
+                            except Exception as e:
+                                retries += 1
+                                log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                                hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                        else:
+                            log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                         hash_info_list_dir1.append((file, file_path, hashes))
 
-                for root, _, files in os.walk(compare_dir_2):
+                for root, _, files in os.walk(dir2):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        try:
-                            hashes = get_all_hashes(file_path)
-                        except Exception as e:
-                            log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                        retries = 0
+                        while retries < max_retries:
+                            try:
+                                hashes = get_all_hashes(file_path)
+                                break
+                            except Exception as e:
+                                retries += 1
+                                log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                                hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                        else:
+                            log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                         hash_info_list_dir2.append((file, file_path, hashes))
 
                 if generate_report:
@@ -503,19 +534,25 @@ def main():
                 for root, _, files in os.walk(directory):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        try:
-                            if all_hashes:
-                                hashes = get_all_hashes(file_path)
-                            else:
-                                hash_generator = get_hash(file_path, hash_option)
-                                file_hash = next(hash_generator)
-                                hashes = {hash_option: file_hash}
-                                if verbose_logging:
-                                    log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
-                        except Exception as e:
-                            log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                        retries = 0
+                        while retries < max_retries:
+                            try:
+                                if all_hashes:
+                                    hashes = get_all_hashes(file_path)
+                                else:
+                                    hash_generator = get_hash(file_path, hash_option)
+                                    file_hash = next(hash_generator)
+                                    hashes = {hash_option: file_hash}
+                                    if verbose_logging:
+                                        log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
+                                break
+                            except Exception as e:
+                                retries += 1
+                                log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                                hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                        else:
+                            log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                             failed_hashes += 1
-                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
 
                         hashed_files.append((file, file_path))
                         successful_hashes += 1
