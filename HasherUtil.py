@@ -1,3 +1,5 @@
+# @formatter:off
+
 import hashlib
 import os
 import xlsxwriter
@@ -5,12 +7,13 @@ import datetime
 import sys
 import argparse
 import requests
-import tqdm
 import subprocess
+from tqdm import tqdm
 
 verbose_logging = False
 log = None
 max_retries = 5
+
 
 class CustomLogger:
     def __init__(self, log_file, save_to_file=True):
@@ -31,6 +34,7 @@ class CustomLogger:
             with open(self.log_file, 'a') as f:
                 f.write(log_message + '\n')
 
+
 def get_hash(file_path, hash_algorithm):
     hasher = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
@@ -39,6 +43,7 @@ def get_hash(file_path, hash_algorithm):
             yield hasher.hexdigest()
             if verbose_logging:
                 log.log(f"{file_path} - {hasher.hexdigest()}", context="INFO", level="INFO")
+
 
 def get_all_hashes(file_path):
     hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512']
@@ -51,11 +56,13 @@ def get_all_hashes(file_path):
             log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
     return hashes
 
+
 def confirm_action(message):
     while True:
         user_input = input(f"{message} (y/n): ").lower()
         if user_input in ['y', 'n']:
             return user_input == 'y'
+
 
 def format_file_size(size_in_bytes):
     units = ["B", "KB", "MB", "GB", "TB", "PB"]
@@ -64,6 +71,7 @@ def format_file_size(size_in_bytes):
         size_in_bytes /= 1024
         unit_index += 1
     return f"{size_in_bytes:.2f} {units[unit_index]}"
+
 
 def generate_spreadsheet(workbook, worksheet, hash_algorithms):
     headers = ["File Name", "File Path", "Size of File", "Date Created", "Date Modified"]
@@ -82,11 +90,13 @@ def generate_spreadsheet(workbook, worksheet, hash_algorithms):
             col_letter = chr(ord('C') + col_idx - 2)
             worksheet.set_column(f'{col_letter}:{col_letter}', 75)
 
+
 def compare_directories(worksheet, hash_algorithms, workbook):
     headers = ["Matching"]
     headers.extend([f"File Hash ({algorithm.upper()})" for algorithm in hash_algorithms])
     bold = workbook.add_format({'bold': True})
     worksheet.write_row(0, 0, headers, bold)
+
 
 def gen_report(directory, successful_hashes, failed_hashes, hashed_files, start_time, end_time, all_hashes, hash_option, list_of_hashes):
     report = "\n---START OF REPORT---\n\n"
@@ -111,6 +121,7 @@ def gen_report(directory, successful_hashes, failed_hashes, hashed_files, start_
 
     with open('hashes_report.txt', 'w') as report_file:
         report_file.write(report)
+
 
 def generate_comparison_report(directory1, directory2, matching_files, unmatching_files, start_time, end_time):
     report = "\n---START OF COMPARISON REPORT---\n\n"
@@ -141,6 +152,7 @@ def generate_comparison_report(directory1, directory2, matching_files, unmatchin
     with open('comparison_report.txt', 'w') as report_file:
         report_file.write(report)
 
+
 def compare_versions(version1, version2):
     v1_numbers = list(map(int, version1.split('.')))
     v2_numbers = list(map(int, version2.split('.')))
@@ -158,6 +170,7 @@ def compare_versions(version1, version2):
 
     return 0
 
+
 def check_for_updates(current_version):
     repo_url = "https://api.github.com/repos/AidenFliss/Hasher-Util/releases/latest"
     try:
@@ -166,7 +179,7 @@ def check_for_updates(current_version):
             latest_release = response.json()
             latest_version = latest_release['tag_name'].replace('v', '')
             if latest_version and compare_versions(latest_version, current_version) > 0:
-                log.log("\033[93m" + f"An update is available! Current version: {current_version}, Latest version: {latest_version}" + "\033[0m", context="INFO", level="INFO")
+                log.log(f"An update is available! Current version: {current_version}, Latest version: {latest_version}", context="WARNING", level="WARNING")
                 return latest_version
             else:
                 log.log("\033[92m" + f"Your version ({current_version}) is up to date." + "\033[0m", context="INFO", level="INFO")
@@ -176,31 +189,28 @@ def check_for_updates(current_version):
         log.log("\033[91m" + f"Error checking for updates: {e}" + "\033[0m", context="ERROR", level="ERROR")
     return None
 
+
 def download_update(update_url, latest_version):
     try:
         response = requests.get(update_url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
-        with open(f'v{latest_version}-HasherUtil.exe', 'wb') as file, tqdm(
-            desc="Downloading Update",
-            total=total_size,
-            unit='B',
-            unit_scale=True,
-            unit_divisor=1024,
-            ncols=100,
-            ascii=True,
-            dynamic_ncols=True,
-        ) as bar:
-            for data in response.iter_content(chunk_size=1024):
-                bar.update(len(data))
-                file.write(data)
+        with open(f'v{latest_version}-HasherUtil.exe', 'wb') as file:
+            with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, ncols=100, ascii=False, dynamic_ncols=True, colour="blue") as bar:
+                for data in response.iter_content(chunk_size=1024):
+                    file.write(data)
+                    bar.update(len(data))
+                    sys.stdout.flush()
+        return file.name, os.getcwd() + "\\" + file.name
     except Exception as e:
         log.log("\033[91m" + f"Error downloading update: {e}" + "\033[0m", context="ERROR", level="ERROR")
+        return None
 
-def update_and_restart(update_filename):
+
+def update_and_restart(update_filepath):
     log.log("Updating...", context="INFO", level="INFO")
-    python_executable = sys.executable
-    subprocess.Popen([python_executable, update_filename])
+    subprocess.run(update_filepath)
     sys.exit()
+
 
 def main():
     current_version = "1.0.2"
@@ -209,7 +219,7 @@ def main():
     global log
 
     log = CustomLogger('output.log')
-    
+
     parser = argparse.ArgumentParser(description="Hasher Utility Script")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("-c", "--compare", action="store_true", help="Compare hashes of two directories (uses all algorithms)")
@@ -219,6 +229,7 @@ def main():
     parser.add_argument("-dir", "--directory", help="Path of the directory for single-folder hash generation")
     parser.add_argument("-g", "--generate", action="store_true", help="If a report and spreadsheet should be made")
     parser.add_argument("-s", "--skip-update", action="store_true", help="Skip automatic update check")
+    parser.add_argument("-u", "--update", action="store_true", help="Forces an update if available")
     args = parser.parse_args()
 
     log.log(f"Bulk Hasher v{current_version}", context="INFO", level="INFO")
@@ -230,18 +241,26 @@ def main():
     log.log("-d2 <path> --dir2 Path of the second directory to compare", context="INFO", level="INFO")
     log.log("-a --algorithm <alg.> Hash algorithm to use (md5, sha1, sha256, sha512)", context="INFO", level="INFO")
     log.log("-dir <path> --directory Path of the directory for single-folder hash generation", context="INFO", level="INFO")
-    log.log("-g --generate If a report and spreadsheet should be made\n", context="INFO", level="INFO")
+    log.log("-g --generate If a report and spreadsheet should be made", context="INFO", level="INFO")
+    log.log("-s --skip-update Skip automatic update check", context="INFO", level="INFO")
+    log.log("-u --update Forces an update if available\n", context="INFO", level="INFO")
 
     if not args.skip_update:
-        latest_version = check_for_updates(current_version)
-        if latest_version:
-            if confirm_action("Do you want to download the latest update?"):
-                update_url = f"https://github.com/AidenFliss/Hasher-Util/releases/download/v{latest_version}/v{latest_version}-HasherUtil.exe"
-                update_filename = download_update(update_url, latest_version)
-                log.log(f"Update downloaded: {update_filename}")
-                update_and_restart(update_filename)  # Update and restart the script
-            else:
-                log.log(f"Skipped update version: {latest_version}", context="WARNING", level="WARNING")
+        try:
+            latest_version = check_for_updates(current_version)
+            if latest_version:
+                if args.update or confirm_action("Do you want to download the latest update?"):
+                    update_url = f"https://github.com/AidenFliss/Hasher-Util/releases/download/v{latest_version}/v{latest_version}-HasherUtil.exe"
+                    update_filename, file_path = download_update(update_url, latest_version)
+                    if update_filename is not None:
+                        log.log(f"Update downloaded: {update_filename}")
+                        update_and_restart(file_path)
+                    else:
+                        log.log(f"Error downloading update v{latest_version}", context="ERROR", level="ERROR")
+                else:
+                    log.log(f"Skipped update version: {latest_version} due to an error downloading!", context="WARNING", level="WARNING")
+        except Exception as e:
+            log.log(f"Error during update process: {e}", context="ERROR", level="ERROR")
 
     if args.verbose:
         verbose_logging = True
@@ -379,7 +398,7 @@ def main():
                     row += 1
                     worksheet.write(row, 0, file)
                     worksheet.write(row, 1, file_path)
-                    worksheet.write(row, 2, format_file_size(os.path.getsize(file_path)))                    
+                    worksheet.write(row, 2, format_file_size(os.path.getsize(file_path)))
                     worksheet.write(row, 3, datetime.datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%m/%d/%Y'))
                     worksheet.write(row, 4, datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%m/%d/%Y'))
 
@@ -410,7 +429,7 @@ def main():
 
     if not args.verbose and not args.compare and not args.generate:
         generate_report = True
-        
+
         while True:
             if confirm_action("Enable verbose logging (log hashed files)?"):
                 verbose_logging = True
@@ -578,7 +597,7 @@ def main():
                                 for algorithm in hash_algorithms:
                                     worksheet.write(row, col, hashes.get(algorithm, "N/A"))
                                     col += 1
-                    
+
                 if generate_report:
                     workbook.close()
 
@@ -598,6 +617,7 @@ def main():
 
             if confirm_action("Do you want to quit?"):
                 sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
