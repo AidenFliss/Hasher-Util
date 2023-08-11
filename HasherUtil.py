@@ -9,11 +9,16 @@ import argparse
 import requests
 import subprocess
 from tqdm import tqdm
+from tkinter.filedialog import askdirectory
+import tkinter as tk
+
+root = tk.Tk()
+root.wm_attributes("-alpha", 0)
 
 verbose_logging = False
 log = None
 max_retries = 5
-
+hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512']
 
 class CustomLogger:
     def __init__(self, log_file, save_to_file=True):
@@ -46,7 +51,6 @@ def get_hash(file_path, hash_algorithm):
 
 
 def get_all_hashes(file_path):
-    hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512']
     hashes = {}
     for algorithm in hash_algorithms:
         hash_generator = get_hash(file_path, algorithm)
@@ -73,9 +77,9 @@ def format_file_size(size_in_bytes):
     return f"{size_in_bytes:.2f} {units[unit_index]}"
 
 
-def generate_spreadsheet(workbook, worksheet, hash_algorithms):
+def generate_spreadsheet(workbook, worksheet, hash_algorithms_):
     headers = ["File Name", "File Path", "Size of File", "Date Created", "Date Modified"]
-    headers.extend([f"File Hash ({algorithm.upper()})" for algorithm in hash_algorithms])
+    headers.extend([f"File Hash ({algorithm.upper()})" for algorithm in hash_algorithms_])
 
     bold = workbook.add_format({'bold': True})
     worksheet.write_row(0, 0, headers, bold)
@@ -85,15 +89,17 @@ def generate_spreadsheet(workbook, worksheet, hash_algorithms):
     worksheet.set_column('C:C', 15)  # Size of File
     worksheet.set_column('D:D', 20)  # Date Created
     worksheet.set_column('E:E', 20)  # Date Modified
-    if len(hash_algorithms) > 1:
+    if len(hash_algorithms_) > 1:
         for col_idx in range(5, len(headers)):
             col_letter = chr(ord('C') + col_idx - 2)
             worksheet.set_column(f'{col_letter}:{col_letter}', 75)
+    else:
+        worksheet.set_column('F:F', 75)  # Generic algorithm collum (when theres one algo)
 
 
-def compare_directories(worksheet, hash_algorithms, workbook):
+def compare_directories(worksheet, workbook, hash_algorithms_):
     headers = ["Matching"]
-    headers.extend([f"File Hash ({algorithm.upper()})" for algorithm in hash_algorithms])
+    headers.extend([f"File Hash ({algorithm.upper()})" for algorithm in hash_algorithms_])
     bold = workbook.add_format({'bold': True})
     worksheet.write_row(0, 0, headers, bold)
 
@@ -213,10 +219,11 @@ def update_and_restart(update_filepath):
 
 
 def main():
-    current_version = "1.0.2"
+    current_version = "1.0.3"
 
     global verbose_logging
     global log
+    global hash_algorithms
 
     log = CustomLogger('output.log')
 
@@ -296,7 +303,7 @@ def main():
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                 hash_info_list_dir1.append((file, file_path, hashes))
@@ -312,7 +319,7 @@ def main():
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                 hash_info_list_dir2.append((file, file_path, hashes))
@@ -337,8 +344,8 @@ def main():
             generate_comparison_report(dir1, dir2, matching_files, unmatching_files, start_time, end_time)
 
     if args.directory:
-        directory = args.directory if args.directory else input("Enter the directory path: ")
-        hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512']
+        directory = args.directory if args.directory else askdirectory(title="Choose the directory")
+        hashalgorithms = hash_algorithms
         all_hashes = True if args.algorithm == 'all' else False
 
         while True:
@@ -346,7 +353,7 @@ def main():
                 hash_option = args.algorithm
             else:
                 hash_option = input("Choose a hash algorithm: ").lower() if not all_hashes else 'all'
-            if not all_hashes and hash_option not in hash_algorithms:
+            if not all_hashes and hash_option not in hashalgorithms:
                 log.log("Invalid hash algorithm.", context="ERROR", level="ERROR")
                 continue
             break
@@ -362,7 +369,7 @@ def main():
             start_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
             workbook = xlsxwriter.Workbook('hashes.xlsx')
             worksheet = workbook.add_worksheet()
-            generate_spreadsheet(workbook, worksheet, hash_algorithms)
+            generate_spreadsheet(workbook, worksheet, hashalgorithms)
 
         for root, _, files in os.walk(directory):
             for file in files:
@@ -382,7 +389,7 @@ def main():
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hashalgorithms}
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                     failed_hashes += 1
@@ -402,11 +409,11 @@ def main():
                     worksheet.write(row, 3, datetime.datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%m/%d/%Y'))
                     worksheet.write(row, 4, datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%m/%d/%Y'))
 
-                    if len(hash_algorithms) == 1:
+                    if len(hashalgorithms) == 1:
                         worksheet.write(row, 5, hashes[hash_option])
                     else:
                         col = 5
-                        for algorithm in hash_algorithms:
+                        for algorithm in hashalgorithms:
                             worksheet.write(row, col, hashes.get(algorithm, "N/A"))
                             col += 1
 
@@ -437,8 +444,8 @@ def main():
                 compare_dirs = False
             else:
                 compare_dirs = True
-                compare_dir_1 = input("Enter the path of the first directory: ")
-                compare_dir_2 = input("Enter the path of the second directory: ")
+                compare_dir_1 = askdirectory(title="Choose the first directory to compare!")
+                compare_dir_2 = askdirectory(title="Choose the second directory to compare!")
 
                 if not os.path.isdir(compare_dir_1) or not os.path.isdir(compare_dir_2):
                     log.log("Invalid directories. Please enter valid directory paths.", context="ERROR", level="ERROR")
@@ -448,7 +455,7 @@ def main():
                 generate_report = False
 
             if not compare_dirs:
-                directory = input("Enter the directory path: ")
+                directory = askdirectory(title="Choose the directory you want to hash!")
                 if not os.path.isdir(directory):
                     log.log("Invalid directory. Please enter a valid directory path.", context="ERROR", level="ERROR")
                     continue
@@ -457,9 +464,12 @@ def main():
                 if not compare_dirs:
                     if not confirm_action("Calculate all available hash algorithms?"):
                         log.log("Available hash algorithms:", context="INFO", level="INFO")
-                        log.log("1. md5\n2. sha1\n3. sha256\n4. sha512", context="INFO", level="INFO")
+                        x = 1
+                        for algorithm in hash_algorithms:
+                            log.log(f"{x}. {algorithm.upper()}", context="INFO", level="INFO")
+                            x += 1
                         hash_option = input("Choose a hash algorithm: ").lower()
-                        if hash_option not in ['md5', 'sha1', 'sha256', 'sha512']:
+                        if hash_option not in hash_algorithms:
                             log.log("Invalid hash algorithm.", context="ERROR", level="ERROR")
                             continue
                     else:
@@ -469,7 +479,7 @@ def main():
                     hash_option = 'all'
                     break
 
-            hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512'] if hash_option == 'all' else [hash_option]
+            hashalgorithms = hash_algorithms if hash_option == 'all' else [hash_option]
             all_hashes = True if hash_option == 'all' else False
 
             successful_hashes = 0
@@ -485,16 +495,16 @@ def main():
                 worksheet = workbook.add_worksheet()
 
                 if compare_dirs:
-                    compare_directories(worksheet, hash_algorithms, workbook)
+                    compare_directories(worksheet, hashalgorithms, workbook)
                 else:
-                    generate_spreadsheet(workbook, worksheet, hash_algorithms)
+                    generate_spreadsheet(workbook, worksheet, hashalgorithms)
 
             if compare_dirs:
                 log.log("Comparing hashes of two directories...")
                 hash_info_list_dir1 = []
                 hash_info_list_dir2 = []
 
-                for root, _, files in os.walk(dir1):
+                for root, _, files in os.walk(compare_dir_1):
                     for file in files:
                         file_path = os.path.join(root, file)
                         retries = 0
@@ -510,7 +520,7 @@ def main():
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                         hash_info_list_dir1.append((file, file_path, hashes))
 
-                for root, _, files in os.walk(dir2):
+                for root, _, files in os.walk(compare_dir_2):
                     for file in files:
                         file_path = os.path.join(root, file)
                         retries = 0
@@ -520,7 +530,7 @@ def main():
                                 break
                             except Exception as e:
                                 retries += 1
-                                log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
+                                log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
                                 hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
                         else:
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
@@ -529,16 +539,18 @@ def main():
                 if generate_report:
                     matching_files = []
                     unmatching_files = []
+                    errored_files = []
 
                     for name1, path1, hashes1 in hash_info_list_dir1:
                         matching_info = "Not Matching"
                         for name2, path2, hashes2 in hash_info_list_dir2:
                             if name1 == name2:
-                                if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in hash_algorithms):
+                                if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in hashalgorithms):
                                     matching_info = "Matching"
                                     matching_files.append(name1)
                                 else:
-                                    unmatching_files.append(name1)
+                                    # unmatching_files.append(name1)
+                                    errored_files.append(name1)
                                 break
                         hash_info_dict[name1] = (matching_info, path1, hashes1)
 
@@ -567,8 +579,8 @@ def main():
                                 break
                             except Exception as e:
                                 retries += 1
-                                log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                                hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                                log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                                hashes = {algorithm: "HASHING_ERROR" for algorithm in hashalgorithms}
                         else:
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
                             failed_hashes += 1
@@ -590,11 +602,11 @@ def main():
                             worksheet.write(row, 3, datetime.datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%m/%d/%Y'))
                             worksheet.write(row, 4, datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%m/%d/%Y'))
 
-                            if len(hash_algorithms) == 1:
+                            if len(hashalgorithms) == 1:
                                 worksheet.write(row, 5, hashes[hash_option])
                             else:
                                 col = 5
-                                for algorithm in hash_algorithms:
+                                for algorithm in hashalgorithms:
                                     worksheet.write(row, col, hashes.get(algorithm, "N/A"))
                                     col += 1
 
