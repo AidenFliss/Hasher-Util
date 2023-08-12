@@ -16,9 +16,12 @@ root = tk.Tk()
 root.wm_attributes("-alpha", 0)
 
 verbose_logging = False
+silent_logging = False
 log = None
 max_retries = 5
 hash_algorithms = ['md5', 'sha1', 'sha256', 'sha512']
+error_hash_algorithms = ['HASHING_ERROR', 'HASHING_ERROR', 'HASHING_ERROR', 'HASHING_ERROR']
+
 
 class CustomLogger:
     def __init__(self, log_file, save_to_file=True):
@@ -26,18 +29,78 @@ class CustomLogger:
         self.save_to_file = save_to_file
 
     def log(self, message, context="INFO", level="INFO"):
-        log_message = f"{context} - {message}"
+        if not silent_logging:
+            log_message = f"{context} - {message}"
 
-        if level == "ERROR":
-            print("\033[91m" + log_message + "\033[0m")
-        elif level == "WARNING":
-            print("\033[93m" + log_message + "\033[0m")
-        else:
-            print(log_message)
+            if level == "ERROR":
+                print("\033[91m" + log_message + "\033[0m")
+            elif level == "WARNING":
+                print("\033[93m" + log_message + "\033[0m")
+            else:
+                print(log_message)
 
-        if self.save_to_file:
-            with open(self.log_file, 'a') as f:
-                f.write(log_message + '\n')
+            if self.save_to_file:
+                with open(self.log_file, 'a') as f:
+                    f.write(log_message + '\n')
+
+
+class AutoUpdate:
+    def __init__(self):
+        self.repo_url = "https://api.github.com/repos/AidenFliss/Hasher-Util/releases/latest"
+
+    def compare_versions(self, version1, version2):
+        v1_numbers = list(map(int, version1.split('.')))
+        v2_numbers = list(map(int, version2.split('.')))
+
+        for v1, v2 in zip(v1_numbers, v2_numbers):
+            if v1 > v2:
+                return 1
+            elif v1 < v2:
+                return -1
+
+        if len(v1_numbers) > len(v2_numbers):
+            return 1
+        elif len(v1_numbers) < len(v2_numbers):
+            return -1
+
+        return 0
+
+    def check_for_updates(self, current_version):
+        try:
+            response = requests.get(self.repo_url)
+            if response.status_code == 200:
+                latest_release = response.json()
+                latest_version = latest_release['tag_name'].replace('v', '')
+                if latest_version and self.compare_versions(latest_version, current_version) > 0:
+                    log.log(f"An update is available! Current version: {current_version}, Latest version: {latest_version}", context="WARNING", level="WARNING")
+                    return latest_version
+                else:
+                    log.log("\033[92m" + f"Your version ({current_version}) is up to date." + "\033[0m", context="INFO", level="INFO")
+            else:
+                log.log("\033[91m" + "Failed to fetch latest release information." + "\033[0m", context="ERROR", level="ERROR")
+        except Exception as e:
+            log.log("\033[91m" + f"Error checking for updates: {e}" + "\033[0m", context="ERROR", level="ERROR")
+        return None
+
+    def download_update(self, update_url, latest_version):
+        try:
+            response = requests.get(update_url, stream=True)
+            total_size = int(response.headers.get('content-length', 0))
+            with open(f'v{latest_version}-HasherUtil.exe', 'wb') as file:
+                with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, ncols=100, ascii=False, dynamic_ncols=True, colour="blue") as bar:
+                    for data in response.iter_content(chunk_size=1024):
+                        file.write(data)
+                        bar.update(len(data))
+                        sys.stdout.flush()
+            return file.name, os.getcwd() + "\\" + file.name
+        except Exception as e:
+            log.log("\033[91m" + f"Error downloading update: {e}" + "\033[0m", context="ERROR", level="ERROR")
+            return None
+
+    def update_and_restart(self, update_filepath):
+        log.log("Updating...", context="INFO", level="INFO")
+        subprocess.run(update_filepath)
+        sys.exit()
 
 
 def get_hash(file_path, hash_algorithm):
@@ -52,13 +115,18 @@ def get_hash(file_path, hash_algorithm):
 
 def get_all_hashes(file_path):
     hashes = {}
-    for algorithm in hash_algorithms:
-        hash_generator = get_hash(file_path, algorithm)
-        file_hash = next(hash_generator)
-        hashes[algorithm] = file_hash
-        if verbose_logging:
-            log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
-    return hashes
+    try:
+        for algorithm in hash_algorithms:
+            hash_generator = get_hash(file_path, algorithm)
+            file_hash = next(hash_generator)
+            hashes[algorithm] = file_hash
+            if verbose_logging:
+                log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
+        return hashes
+    except Exception as e:
+        log.log(f"Error hashing file: {file_path}: {e}", context="ERROR", level="ERROR")
+        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+        return hashes
 
 
 def confirm_action(message):
@@ -129,15 +197,17 @@ def gen_report(directory, successful_hashes, failed_hashes, hashed_files, start_
         report_file.write(report)
 
 
-def generate_comparison_report(directory1, directory2, matching_files, unmatching_files, start_time, end_time):
+def generate_comparison_report(directory1, directory2, matching_files, unmatching_files, errored_files, start_time, end_time):
     report = "\n---START OF COMPARISON REPORT---\n\n"
     report += f"Directory 1: {directory1}\n"
     report += f"Directory 2: {directory2}\n\n"
 
     report += f"Matching: {len(matching_files)}\n"
-    report += f"Not Matching: {len(unmatching_files)}\n\n"
+    report += f"Not Matching: {len(unmatching_files)}\n"
+    report += f"Errored: {len(errored_files)}\n\n"
 
-    report += f"Quick Summary: ({len(matching_files)}/{len(matching_files) + len(unmatching_files)}) files are matching\n\n"
+    report += f"Quick Summary: ({len(matching_files)}/{len(matching_files) + len(unmatching_files)}) files are matching (that succeeded)\n\n"
+    report += f"Quick Summary 2: ({len(matching_files)}/{len(matching_files) + len(unmatching_files) + len(errored_files)}) files are matching\n\n"
 
     report += "Matching Files:\n"
     for name in matching_files:
@@ -145,6 +215,10 @@ def generate_comparison_report(directory1, directory2, matching_files, unmatchin
 
     report += "\nUnmatching Files:\n"
     for name in unmatching_files:
+        report += f"{name}\n"
+
+    report += "\nErrored Files:\n"
+    for name in errored_files:
         report += f"{name}\n"
 
     report += f"\nStart Time: {start_time}\n"
@@ -159,76 +233,20 @@ def generate_comparison_report(directory1, directory2, matching_files, unmatchin
         report_file.write(report)
 
 
-def compare_versions(version1, version2):
-    v1_numbers = list(map(int, version1.split('.')))
-    v2_numbers = list(map(int, version2.split('.')))
-
-    for v1, v2 in zip(v1_numbers, v2_numbers):
-        if v1 > v2:
-            return 1
-        elif v1 < v2:
-            return -1
-
-    if len(v1_numbers) > len(v2_numbers):
-        return 1
-    elif len(v1_numbers) < len(v2_numbers):
-        return -1
-
-    return 0
-
-
-def check_for_updates(current_version):
-    repo_url = "https://api.github.com/repos/AidenFliss/Hasher-Util/releases/latest"
-    try:
-        response = requests.get(repo_url)
-        if response.status_code == 200:
-            latest_release = response.json()
-            latest_version = latest_release['tag_name'].replace('v', '')
-            if latest_version and compare_versions(latest_version, current_version) > 0:
-                log.log(f"An update is available! Current version: {current_version}, Latest version: {latest_version}", context="WARNING", level="WARNING")
-                return latest_version
-            else:
-                log.log("\033[92m" + f"Your version ({current_version}) is up to date." + "\033[0m", context="INFO", level="INFO")
-        else:
-            log.log("\033[91m" + "Failed to fetch latest release information." + "\033[0m", context="ERROR", level="ERROR")
-    except Exception as e:
-        log.log("\033[91m" + f"Error checking for updates: {e}" + "\033[0m", context="ERROR", level="ERROR")
-    return None
-
-
-def download_update(update_url, latest_version):
-    try:
-        response = requests.get(update_url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        with open(f'v{latest_version}-HasherUtil.exe', 'wb') as file:
-            with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, ncols=100, ascii=False, dynamic_ncols=True, colour="blue") as bar:
-                for data in response.iter_content(chunk_size=1024):
-                    file.write(data)
-                    bar.update(len(data))
-                    sys.stdout.flush()
-        return file.name, os.getcwd() + "\\" + file.name
-    except Exception as e:
-        log.log("\033[91m" + f"Error downloading update: {e}" + "\033[0m", context="ERROR", level="ERROR")
-        return None
-
-
-def update_and_restart(update_filepath):
-    log.log("Updating...", context="INFO", level="INFO")
-    subprocess.run(update_filepath)
-    sys.exit()
-
-
 def main():
-    current_version = "1.0.3"
+    current_version = "1.0.4"
 
     global verbose_logging
+    global silent_logging
     global log
     global hash_algorithms
 
     log = CustomLogger('output.log')
+    auto_upd = AutoUpdate()
 
     parser = argparse.ArgumentParser(description="Hasher Utility Script")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("-S", "--silent", action="store_true", help="Disables all logging")
     parser.add_argument("-c", "--compare", action="store_true", help="Compare hashes of two directories (uses all algorithms)")
     parser.add_argument("-d1", "--dir1", help="Path of the first directory to compare")
     parser.add_argument("-d2", "--dir2", help="Path of the second directory to compare")
@@ -243,6 +261,7 @@ def main():
     log.log("Made by: Aiden Fliss", context="INFO", level="INFO")
     log.log("Command line args:", context="INFO", level="INFO")
     log.log("-v --verbose Enable verbose logging", context="INFO", level="INFO")
+    log.log("-S --silent Disables all logging", context="INFO", level="INFO")
     log.log("-c --compare Compare hashes of two directories (uses all algorithms)", context="INFO", level="INFO")
     log.log("-d1 <path> --dir1 Path of the first directory to compare", context="INFO", level="INFO")
     log.log("-d2 <path> --dir2 Path of the second directory to compare", context="INFO", level="INFO")
@@ -254,14 +273,14 @@ def main():
 
     if not args.skip_update:
         try:
-            latest_version = check_for_updates(current_version)
+            latest_version = auto_upd.check_for_updates(current_version)
             if latest_version:
                 if args.update or confirm_action("Do you want to download the latest update?"):
                     update_url = f"https://github.com/AidenFliss/Hasher-Util/releases/download/v{latest_version}/v{latest_version}-HasherUtil.exe"
-                    update_filename, file_path = download_update(update_url, latest_version)
+                    update_filename, file_path = auto_upd.download_update(update_url, latest_version)
                     if update_filename is not None:
                         log.log(f"Update downloaded: {update_filename}")
-                        update_and_restart(file_path)
+                        auto_upd.update_and_restart(file_path)
                     else:
                         log.log(f"Error downloading update v{latest_version}", context="ERROR", level="ERROR")
                 else:
@@ -271,6 +290,10 @@ def main():
 
     if args.verbose:
         verbose_logging = True
+
+    if args.silent:
+        silent_logging = True
+        verbose_logging = False  # Cancel verbose logging because silent logging takes priority
 
     if args.compare:
         compare_dirs = True
@@ -296,44 +319,54 @@ def main():
             for file in files:
                 file_path = os.path.join(root, file)
                 retries = 0
+                success = False
                 while retries < max_retries:
                     try:
                         hashes = get_all_hashes(file_path)
-                        break
+                        success = True
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                    if success:
+                        break
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                    hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                 hash_info_list_dir1.append((file, file_path, hashes))
 
         for root, _, files in os.walk(dir2):
             for file in files:
                 file_path = os.path.join(root, file)
                 retries = 0
+                success = False
                 while retries < max_retries:
                     try:
                         hashes = get_all_hashes(file_path)
-                        break
+                        success = True
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
+                    if success:
+                        break
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                    hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                 hash_info_list_dir2.append((file, file_path, hashes))
 
         matching_files = []
         unmatching_files = []
+        errored_files = []
 
         for name1, path1, hashes1 in hash_info_list_dir1:
             matching_info = "Not Matching"
             for name2, path2, hashes2 in hash_info_list_dir2:
                 if name1 == name2:
-                    if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in ['md5', 'sha1', 'sha256', 'sha512']):
+                    if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in hash_algorithms):
                         matching_info = "Matching"
                         matching_files.append(name1)
+                    elif all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in error_hash_algorithms):
+                        matching_info = "Errored"  # Band-aid fix for detecting errored files and sorting then out of unmatching (to prevent confusion)
+                        errored_files.append(name1)
                     else:
                         unmatching_files.append(name1)
                     break
@@ -341,11 +374,10 @@ def main():
 
         if args.generate:
             end_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-            generate_comparison_report(dir1, dir2, matching_files, unmatching_files, start_time, end_time)
+            generate_comparison_report(dir1, dir2, matching_files, unmatching_files, errored_files, start_time, end_time)
 
     if args.directory:
         directory = args.directory if args.directory else askdirectory(title="Choose the directory")
-        hashalgorithms = hash_algorithms
         all_hashes = True if args.algorithm == 'all' else False
 
         while True:
@@ -353,7 +385,7 @@ def main():
                 hash_option = args.algorithm
             else:
                 hash_option = input("Choose a hash algorithm: ").lower() if not all_hashes else 'all'
-            if not all_hashes and hash_option not in hashalgorithms:
+            if not all_hashes and hash_option not in hash_algorithms:
                 log.log("Invalid hash algorithm.", context="ERROR", level="ERROR")
                 continue
             break
@@ -369,29 +401,32 @@ def main():
             start_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
             workbook = xlsxwriter.Workbook('hashes.xlsx')
             worksheet = workbook.add_worksheet()
-            generate_spreadsheet(workbook, worksheet, hashalgorithms)
+            generate_spreadsheet(workbook, worksheet, hash_algorithms)
 
         for root, _, files in os.walk(directory):
             for file in files:
                 file_path = os.path.join(root, file)
                 retries = 0
+                success = False
                 while retries < max_retries:
                     try:
                         if all_hashes:
                             hashes = get_all_hashes(file_path)
+                            success = True
                         else:
                             hash_generator = get_hash(file_path, hash_option)
                             file_hash = next(hash_generator)
                             hashes = {hash_option: file_hash}
                             if verbose_logging:
                                 log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
-                        break
                     except Exception as e:
                         retries += 1
                         log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                        hashes = {algorithm: "HASHING_ERROR" for algorithm in hashalgorithms}
+                    if success:
+                        break
                 else:
                     log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                    hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                     failed_hashes += 1
 
                 hashed_files.append((file, file_path))
@@ -409,11 +444,11 @@ def main():
                     worksheet.write(row, 3, datetime.datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%m/%d/%Y'))
                     worksheet.write(row, 4, datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%m/%d/%Y'))
 
-                    if len(hashalgorithms) == 1:
+                    if len(hash_algorithms) == 1:
                         worksheet.write(row, 5, hashes[hash_option])
                     else:
                         col = 5
-                        for algorithm in hashalgorithms:
+                        for algorithm in hash_algorithms:
                             worksheet.write(row, col, hashes.get(algorithm, "N/A"))
                             col += 1
 
@@ -428,8 +463,6 @@ def main():
                 list_of_hashes += f"{name} | {hash_strings}\n"
 
             end_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-
-            time_taken = datetime.datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f') - datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f')
             gen_report(directory, successful_hashes, failed_hashes, hashed_files, start_time, end_time, all_hashes, hash_option, list_of_hashes)
 
             log.log("Hash report generated.", context="REPORT")
@@ -438,8 +471,11 @@ def main():
         generate_report = True
 
         while True:
-            if confirm_action("Enable verbose logging (log hashed files)?"):
-                verbose_logging = True
+            if confirm_action("Disable all logging (no logs)?"):
+                silent_logging = True
+            else:
+                if confirm_action("Enable verbose logging (log everything)?"):
+                    verbose_logging = True
             if not confirm_action("Compare hashes of two directories?"):
                 compare_dirs = False
             else:
@@ -479,7 +515,7 @@ def main():
                     hash_option = 'all'
                     break
 
-            hashalgorithms = hash_algorithms if hash_option == 'all' else [hash_option]
+            hashalgorithm = hash_algorithms if hash_option == 'all' else [hash_option]
             all_hashes = True if hash_option == 'all' else False
 
             successful_hashes = 0
@@ -495,9 +531,9 @@ def main():
                 worksheet = workbook.add_worksheet()
 
                 if compare_dirs:
-                    compare_directories(worksheet, hashalgorithms, workbook)
+                    compare_directories(worksheet, workbook, hashalgorithm)
                 else:
-                    generate_spreadsheet(workbook, worksheet, hashalgorithms)
+                    generate_spreadsheet(workbook, worksheet, hashalgorithm)
 
             if compare_dirs:
                 log.log("Comparing hashes of two directories...")
@@ -508,32 +544,38 @@ def main():
                     for file in files:
                         file_path = os.path.join(root, file)
                         retries = 0
+                        success = False
                         while retries < max_retries:
                             try:
                                 hashes = get_all_hashes(file_path)
-                                break
+                                success = True
                             except Exception as e:
                                 retries += 1
-                                log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                                hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                                log.log(f"Error hashing {file_path}: {repr(e)}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                            if success:
+                                break
                         else:
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                         hash_info_list_dir1.append((file, file_path, hashes))
 
                 for root, _, files in os.walk(compare_dir_2):
                     for file in files:
                         file_path = os.path.join(root, file)
                         retries = 0
+                        success = False
                         while retries < max_retries:
                             try:
                                 hashes = get_all_hashes(file_path)
-                                break
+                                success = True
                             except Exception as e:
                                 retries += 1
-                                log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                                hashes = {algorithm: "HASHING_ERROR" for algorithm in ['md5', 'sha1', 'sha256', 'sha512']}
+                                log.log(f"Error hashing {file_path}: {repr(e)}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
+                            if success:
+                                break
                         else:
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hash_algorithms}
                         hash_info_list_dir2.append((file, file_path, hashes))
 
                 if generate_report:
@@ -545,17 +587,19 @@ def main():
                         matching_info = "Not Matching"
                         for name2, path2, hashes2 in hash_info_list_dir2:
                             if name1 == name2:
-                                if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in hashalgorithms):
+                                if all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in hash_algorithms):
                                     matching_info = "Matching"
                                     matching_files.append(name1)
-                                else:
-                                    # unmatching_files.append(name1)
+                                elif all(hashes1.get(algorithm) == hashes2.get(algorithm) for algorithm in error_hash_algorithms):
+                                    matching_info = "Errored"  # Band-aid fix for detecting errored files and sorting then out of unmatching (to prevent confusion)
                                     errored_files.append(name1)
+                                else:
+                                    unmatching_files.append(name1)
                                 break
                         hash_info_dict[name1] = (matching_info, path1, hashes1)
 
                     end_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-                    generate_comparison_report(compare_dir_1, compare_dir_2, matching_files, unmatching_files, start_time, end_time)
+                    generate_comparison_report(compare_dir_1, compare_dir_2, matching_files, unmatching_files, errored_files, start_time, end_time)
 
                     log.log("Finished generating comparison report!", context="REPORT")
 
@@ -566,23 +610,26 @@ def main():
                     for file in files:
                         file_path = os.path.join(root, file)
                         retries = 0
+                        success = False
                         while retries < max_retries:
                             try:
                                 if all_hashes:
                                     hashes = get_all_hashes(file_path)
+                                    success = True
                                 else:
                                     hash_generator = get_hash(file_path, hash_option)
                                     file_hash = next(hash_generator)
                                     hashes = {hash_option: file_hash}
                                     if verbose_logging:
                                         log.log(f"{file_path} - {file_hash}", context="INFO", level="INFO")
-                                break
                             except Exception as e:
                                 retries += 1
                                 log.log(f"Error hashing {file_path}: {e}. Retrying... ({retries}/{max_retries})", context="ERROR", level="ERROR")
-                                hashes = {algorithm: "HASHING_ERROR" for algorithm in hashalgorithms}
+                            if success:
+                                break
                         else:
                             log.log(f"Failed to hash {file_path} after {max_retries} retries.", context="ERROR", level="ERROR")
+                            hashes = {algorithm: "HASHING_ERROR" for algorithm in hashalgorithm}
                             failed_hashes += 1
 
                         hashed_files.append((file, file_path))
@@ -602,11 +649,11 @@ def main():
                             worksheet.write(row, 3, datetime.datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%m/%d/%Y'))
                             worksheet.write(row, 4, datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%m/%d/%Y'))
 
-                            if len(hashalgorithms) == 1:
+                            if len(hashalgorithm) == 1:
                                 worksheet.write(row, 5, hashes[hash_option])
                             else:
                                 col = 5
-                                for algorithm in hashalgorithms:
+                                for algorithm in hashalgorithm:
                                     worksheet.write(row, col, hashes.get(algorithm, "N/A"))
                                     col += 1
 
